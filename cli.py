@@ -6042,6 +6042,8 @@ class HermesCLI:
             self._handle_skin_command(cmd_original)
         elif canonical == "voice":
             self._handle_voice_command(cmd_original)
+        elif canonical == "jarvis":
+            self._handle_jarvis_command(cmd_original)
         else:
             # Check for user-defined quick commands (bypass agent loop, no LLM call)
             base_cmd = cmd_lower.split()[0]
@@ -7572,6 +7574,72 @@ class HermesCLI:
             _cprint(f"{_DIM}TTS playback failed: {e}{_RST}")
         finally:
             self._voice_tts_done.set()
+
+    # Hardcoded for V1; future work parses tasks/todo.md or pulls from todo_tool.
+    _JARVIS_DUMMY_TODOS = (
+        "오전 10시 팀 스탠드업 미팅",
+        "오후 2시 강의 녹화 세션",
+        "저녁 운동 + 단백질 보충",
+    )
+
+    @classmethod
+    def _build_jarvis_briefing_prompt(cls) -> str:
+        """Build the LLM prompt for the clap-triggered FOMO morning briefing.
+
+        V1 uses hardcoded todos; a later iteration will source them from
+        ``tasks/todo.md`` or ``tools.todo_tool``.
+        """
+        todos = "\n".join(f"- {t}" for t in cls._JARVIS_DUMMY_TODOS)
+        return (
+            "지금 즉시 weather 스킬을 호출해 서울의 현재 날씨를 가져오고, "
+            "아래 할 일 목록과 종합해서 한국어 아침 브리핑을 만들어.\n\n"
+            "형식 엄수:\n"
+            "- 한국어 3문장. 정확히 3문장.\n"
+            "- 1문: 오늘 가장 놓치면 안 될 한 건을 리드로.\n"
+            "- 2문: 날씨 + 즉각 행동(우산/겉옷/외출 타이밍 등).\n"
+            "- 3문: 나머지 할 일 요약 — 많으면 '그 외 N개'로 압축.\n"
+            "- 톤: 뉴스 앵커처럼 짧고 단정적으로. 이모지·불릿·마크다운 금지.\n"
+            "- 답변 전체가 TTS로 낭독되므로 부가 설명, 머리말, 마무리 인사 금지. "
+            "본문 3문장만 출력.\n\n"
+            f"오늘 할 일:\n{todos}"
+        )
+
+    def _handle_jarvis_command(self, command: str):
+        """Handle /jarvis — clap-triggered FOMO morning briefing."""
+        from tools.voice_mode import detect_audio_environment, play_beep
+        from tools.clap_detector import ClapDetector
+
+        env = detect_audio_environment()
+        if not env["available"]:
+            _cprint(f"\n{_ACCENT}Jarvis requires working audio:{_RST}")
+            for warning in env["warnings"]:
+                _cprint(f"  {_DIM}{warning}{_RST}")
+            return
+
+        # Enable voice mode if not already on (idempotent).
+        if not self._voice_mode:
+            self._enable_voice_mode()
+            if not self._voice_mode:
+                # _enable_voice_mode refused (missing packages, etc.) — bail.
+                return
+
+        # TTS must be on for the briefing to be spoken.
+        with self._voice_lock:
+            self._voice_tts = True
+
+        _cprint(f"\n{_ACCENT}Jarvis listening. 박수 두 번으로 브리핑 시작 (30초 타임아웃).{_RST}")
+        play_beep(frequency=880, duration=0.12, count=1)
+
+        detector = ClapDetector()
+        if not detector.listen(timeout_seconds=30.0):
+            _cprint(f"{_DIM}박수를 감지하지 못했습니다. /jarvis 로 다시 시도하세요.{_RST}")
+            return
+
+        play_beep(frequency=1320, duration=0.10, count=2)
+        _cprint(f"{_ACCENT}박수 감지. 브리핑 준비 중…{_RST}")
+
+        prompt = HermesCLI._build_jarvis_briefing_prompt()
+        self._pending_input.put(prompt)
 
     def _handle_voice_command(self, command: str):
         """Handle /voice [on|off|tts|status] command."""
