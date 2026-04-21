@@ -33,9 +33,10 @@ logger = logging.getLogger(__name__)
 #   * A clap's brief peak (15k-30k on int16) clearly exceeds threshold.
 #   * Two claps must be >=cooldown apart and <=window apart.
 # ---------------------------------------------------------------------------
-CLAP_RMS_THRESHOLD = 1500          # int16 RMS; must exceed this for a chunk to count as impulse.
-                                   # Chosen for laptop built-in mics at arm's length. Tune via peak_rms
-                                   # diagnostic on timeout (see _handle_jarvis_command in cli.py).
+CLAP_RMS_THRESHOLD = 1200          # int16 RMS; must exceed this for a chunk to count as impulse.
+                                   # Field-tuned on a MacBook built-in mic: 3000 never caught, 1500 caught
+                                   # but barely, 1200 leaves headroom without touching typical speech
+                                   # RMS (~200-800). Tune via peak_rms diagnostic on timeout.
 CLAP_WINDOW_SECONDS = 3.0          # second clap must arrive within this
 CLAP_COOLDOWN_SECONDS = 0.3        # min gap between two claps — also rejects one clap spread over chunks
 
