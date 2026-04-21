@@ -101,6 +101,36 @@ class TestClapAnalyzerReset(unittest.TestCase):
         self.assertFalse(a.process_chunk(_clap(), 0.1))
 
 
+class TestClapAnalyzerPeakRms(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(0xC1AB)
+
+    def test_peak_rms_tracks_maximum_across_chunks(self):
+        a = ClapAnalyzer()
+        self.assertEqual(a.peak_rms, 0.0)
+
+        # Silence only: peak becomes a small non-zero value (synthetic noise RMS ~30).
+        a.process_chunk(_silence(), 0.0)
+        self.assertLess(a.peak_rms, 100)
+
+        # Clap arrives: peak jumps into the clap range.
+        a.process_chunk(_clap(), 0.1)
+        peak_after_clap = a.peak_rms
+        self.assertGreater(peak_after_clap, 5000)
+
+        # A quieter chunk afterwards must not lower the peak.
+        a.process_chunk(_silence(), 0.2)
+        self.assertEqual(a.peak_rms, peak_after_clap)
+
+    def test_peak_rms_survives_reset(self):
+        a = ClapAnalyzer()
+        a.process_chunk(_clap(), 0.0)
+        peak = a.peak_rms
+        self.assertGreater(peak, 5000)
+        a.reset()
+        self.assertEqual(a.peak_rms, peak)
+
+
 class TestClapAnalyzerEdgeCases(unittest.TestCase):
     def setUp(self):
         np.random.seed(0xC1AB)

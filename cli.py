@@ -7607,7 +7607,7 @@ class HermesCLI:
     def _handle_jarvis_command(self, command: str):
         """Handle /jarvis — clap-triggered FOMO morning briefing."""
         from tools.voice_mode import detect_audio_environment, play_beep
-        from tools.clap_detector import ClapDetector
+        from tools.clap_detector import CLAP_RMS_THRESHOLD, ClapDetector
 
         env = detect_audio_environment()
         if not env["available"]:
@@ -7637,7 +7637,26 @@ class HermesCLI:
             _cprint(f"{_DIM}Jarvis 청취 실패: {exc}. 오디오 장치가 사용 중이거나 권한 문제일 수 있습니다.{_RST}")
             return
         if not got_clap:
-            _cprint(f"{_DIM}박수를 감지하지 못했습니다. /jarvis 로 다시 시도하세요.{_RST}")
+            peak = detector.peak_rms
+            _cprint(f"{_DIM}박수를 감지하지 못했습니다. "
+                    f"관측된 최대 RMS: {peak:.0f} (임계값 {CLAP_RMS_THRESHOLD}).{_RST}")
+            if peak < 50:
+                _cprint(
+                    f"  {_DIM}RMS가 거의 0입니다 — 마이크 입력이 잡히지 않았을 가능성이 큽니다. "
+                    f"macOS 시스템 설정 → 개인정보 보호 → 마이크에서 "
+                    f"Terminal(또는 iTerm) 권한을 확인하세요.{_RST}"
+                )
+            elif peak < CLAP_RMS_THRESHOLD:
+                _cprint(
+                    f"  {_DIM}마이크가 임계값에 못 미쳤습니다. "
+                    f"tools/clap_detector.py의 CLAP_RMS_THRESHOLD를 "
+                    f"{max(int(peak * 0.7), 200)} 부근으로 낮춰보세요.{_RST}"
+                )
+            else:
+                _cprint(
+                    f"  {_DIM}임계값은 넘었으나 더블 박수 패턴이 성립하지 않았습니다. "
+                    f"박수 사이 간격을 0.3~3초 사이로 맞춰 다시 시도해주세요.{_RST}"
+                )
             return
 
         play_beep(frequency=1320, duration=0.10, count=2)

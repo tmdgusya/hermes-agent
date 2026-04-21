@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 #   * A clap's brief peak (15k-30k on int16) clearly exceeds threshold.
 #   * Two claps must be >=cooldown apart and <=window apart.
 # ---------------------------------------------------------------------------
-CLAP_RMS_THRESHOLD = 3000          # int16 RMS; must exceed this for a chunk to count as impulse
+CLAP_RMS_THRESHOLD = 1500          # int16 RMS; must exceed this for a chunk to count as impulse.
+                                   # Chosen for laptop built-in mics at arm's length. Tune via peak_rms
+                                   # diagnostic on timeout (see _handle_jarvis_command in cli.py).
 CLAP_WINDOW_SECONDS = 3.0          # second clap must arrive within this
 CLAP_COOLDOWN_SECONDS = 0.3        # min gap between two claps — also rejects one clap spread over chunks
 
@@ -66,9 +68,24 @@ class ClapAnalyzer:
         self._cooldown = float(cooldown_seconds)
         self._first_clap_at: Optional[float] = None
         self._last_impulse_at: Optional[float] = None
+        self._peak_rms: float = 0.0
+
+    @property
+    def peak_rms(self) -> float:
+        """Highest RMS observed since construction. Survives ``reset()``.
+
+        Used for post-session diagnostics: if a listen session times out,
+        the handler reports ``peak_rms`` so the user can tell whether the
+        environment actually reached the threshold.
+        """
+        return self._peak_rms
 
     def reset(self) -> None:
-        """Clear armed state; next impulse becomes a fresh first-clap."""
+        """Clear armed state; next impulse becomes a fresh first-clap.
+
+        ``peak_rms`` is intentionally NOT reset — diagnostics span the full
+        lifetime of the analyzer.
+        """
         self._first_clap_at = None
         self._last_impulse_at = None
 
@@ -87,6 +104,10 @@ class ClapAnalyzer:
             return False
 
         rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+
+        # Track highest RMS for diagnostics, even for sub-threshold chunks.
+        if rms > self._peak_rms:
+            self._peak_rms = rms
 
         # Expire an old first-clap outside the window so that a fresh clap
         # starts a brand-new pair.
@@ -159,6 +180,15 @@ class ClapDetector:
 
     def __init__(self) -> None:
         self._analyzer = ClapAnalyzer()
+
+    @property
+    def peak_rms(self) -> float:
+        """Highest RMS seen since this detector was constructed.
+
+        Useful for the ``/jarvis`` timeout path: reporting the peak gives
+        the user concrete data for tuning ``CLAP_RMS_THRESHOLD``.
+        """
+        return self._analyzer.peak_rms
 
     def listen(self, timeout_seconds: float = 30.0) -> bool:
         """Block until a double-clap is detected or timeout elapses.

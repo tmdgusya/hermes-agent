@@ -97,6 +97,7 @@ class TestHandleJarvisCommand(unittest.TestCase):
             "tools.clap_detector.ClapDetector"
         ) as MockDetector:
             MockDetector.return_value.listen.return_value = False  # timeout
+            MockDetector.return_value.peak_rms = 500.0  # concrete value; handler formats this
             cli_mod.HermesCLI._handle_jarvis_command(stub, "/jarvis")
 
         self.assertTrue(stub._pending_input.empty(), "timeout must not queue a briefing prompt")
