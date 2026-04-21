@@ -45,8 +45,12 @@ class ClapAnalyzer:
         ARMED       -- saw first clap; waiting for second within window
 
     ``process_chunk`` advances the machine and returns ``True`` exactly
-    once per completed double-clap. After triggering, state resets to
-    IDLE automatically.
+    once per completed double-clap, then resets to IDLE. If a caller
+    keeps feeding chunks after a trigger, subsequent impulses re-arm
+    as a fresh first-clap — i.e. three rapid claps trigger once (on
+    the 2nd) and leave the 3rd armed. The ``/jarvis`` handler stops
+    listening on the first ``True``, so this only matters for
+    long-running reuse.
     """
 
     def __init__(

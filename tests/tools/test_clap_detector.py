@@ -19,6 +19,9 @@ def _clap(n_samples: int = 800) -> np.ndarray:
 
 
 class TestClapAnalyzerSingle(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(0xC1AB)
+
     def test_quiet_input_does_not_trigger(self):
         a = ClapAnalyzer()
         now = 0.0
@@ -36,6 +39,9 @@ class TestClapAnalyzerSingle(unittest.TestCase):
 
 
 class TestClapAnalyzerDouble(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(0xC1AB)
+
     def test_double_clap_within_window_triggers(self):
         a = ClapAnalyzer()
         self.assertFalse(a.process_chunk(_silence(), 0.0))
@@ -54,8 +60,26 @@ class TestClapAnalyzerDouble(unittest.TestCase):
         # A clap after window is treated as new "first clap", not a double
         self.assertFalse(a.process_chunk(_clap(), 3.5))
 
+    def test_three_claps_trigger_once_then_rearm(self):
+        """Three claps in sequence: fires once on 2nd, then re-arms.
+
+        This pins current behavior. The /jarvis handler stops listening
+        on the first True, so the re-arm only matters for long-running
+        callers that reuse the analyzer.
+        """
+        a = ClapAnalyzer()
+        self.assertFalse(a.process_chunk(_clap(), 0.0))  # 1st: arm
+        self.assertTrue(a.process_chunk(_clap(), 0.5))    # 2nd: trigger
+        # 3rd clap re-arms (fresh first clap), no trigger on its own
+        self.assertFalse(a.process_chunk(_clap(), 1.0))
+        # 4th clap would trigger a second pair — demonstrate re-arm worked
+        self.assertTrue(a.process_chunk(_clap(), 1.5))
+
 
 class TestClapAnalyzerCooldown(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(0xC1AB)
+
     def test_rapid_repeat_within_cooldown_ignored(self):
         """Back-to-back chunks from the same clap shouldn't count as two."""
         a = ClapAnalyzer(cooldown_seconds=0.3)
@@ -66,12 +90,28 @@ class TestClapAnalyzerCooldown(unittest.TestCase):
 
 
 class TestClapAnalyzerReset(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(0xC1AB)
+
     def test_reset_clears_armed_state(self):
         a = ClapAnalyzer()
         a.process_chunk(_clap(), 0.0)  # armed with first clap
         a.reset()
         # After reset, the next clap must be treated as a new first-clap
         self.assertFalse(a.process_chunk(_clap(), 0.1))
+
+
+class TestClapAnalyzerEdgeCases(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(0xC1AB)
+
+    def test_zero_length_samples_returns_false_and_does_not_raise(self):
+        a = ClapAnalyzer()
+        empty = np.array([], dtype=np.int16)
+        self.assertFalse(a.process_chunk(empty, 0.0))
+        # State must be untouched — a real clap immediately after still arms cleanly
+        self.assertFalse(a.process_chunk(_clap(), 0.1))  # first clap
+        self.assertTrue(a.process_chunk(_clap(), 0.5))   # double clap fires
 
 
 if __name__ == "__main__":
