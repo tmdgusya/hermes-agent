@@ -19,6 +19,8 @@ when tuning for a noisier environment.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Optional
 
 import numpy as np
@@ -126,7 +128,7 @@ def _import_sd():
 class ClapDetector:
     """Blocking double-clap listener wrapping sounddevice.InputStream.
 
-    Construct once per listening session::
+    Intended for a **single call per process lifetime**::
 
         detector = ClapDetector()
         if detector.listen(timeout_seconds=30.0):
@@ -137,6 +139,14 @@ class ClapDetector:
             ...
 
     Uses the same 16kHz / mono / int16 convention as ``tools.voice_mode``.
+
+    ⚠ macOS limitation: sounddevice's ``InputStream`` can hang on
+    close-then-reopen (see the note in ``tools/voice_mode.py``'s
+    ``AudioRecorder._ensure_stream``). This class opens and closes a
+    fresh stream on every ``listen()`` call, so invoking it repeatedly
+    in the same process, or using it alongside an active voice-mode
+    recording, may stall. The ``/jarvis`` handler only calls it once per
+    session, which avoids the issue in normal use.
     """
 
     # Match the AudioRecorder convention in tools/voice_mode.py
@@ -147,8 +157,8 @@ class ClapDetector:
     # 1600 samples @ 16kHz == 100ms, which is well below a clap's duration.
     BLOCKSIZE = 1600
 
-    def __init__(self, analyzer: Optional[ClapAnalyzer] = None) -> None:
-        self._analyzer = analyzer or ClapAnalyzer()
+    def __init__(self) -> None:
+        self._analyzer = ClapAnalyzer()
 
     def listen(self, timeout_seconds: float = 30.0) -> bool:
         """Block until a double-clap is detected or timeout elapses.
@@ -156,9 +166,6 @@ class ClapDetector:
         Returns:
             ``True`` if a double-clap fired; ``False`` on timeout.
         """
-        import threading
-        import time
-
         sd = _import_sd()
 
         detected = threading.Event()
@@ -168,16 +175,32 @@ class ClapDetector:
                 logger.debug("sounddevice status: %s", status)
             if detected.is_set():
                 return
-            # indata is shape (frames, channels); flatten to 1-D int16
-            chunk = np.asarray(indata, dtype=np.int16).reshape(-1)
-            if self._analyzer.process_chunk(chunk, time.monotonic()):
+            try:
+                # indata is shape (frames, channels); flatten to 1-D int16.
+                chunk = np.asarray(indata, dtype=np.int16).reshape(-1)
+                if self._analyzer.process_chunk(chunk, time.monotonic()):
+                    detected.set()
+            except Exception:
+                # Aborting (set) is preferred to hanging for the full timeout.
+                logger.exception("clap analyzer raised; aborting listen()")
                 detected.set()
 
-        with sd.InputStream(
+        stream = sd.InputStream(
             samplerate=self.SAMPLE_RATE,
             channels=self.CHANNELS,
             dtype=self.DTYPE,
             blocksize=self.BLOCKSIZE,
             callback=_callback,
-        ):
+        )
+        stream.start()
+        try:
             return detected.wait(timeout=timeout_seconds)
+        finally:
+            try:
+                stream.stop()
+            except Exception:
+                logger.debug("stream.stop() failed; continuing", exc_info=True)
+            try:
+                stream.close()
+            except Exception:
+                logger.debug("stream.close() failed; continuing", exc_info=True)
