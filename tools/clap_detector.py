@@ -110,3 +110,74 @@ class ClapAnalyzer:
         logger.info("clap: double-clap detected (gap=%.2fs)", now - self._first_clap_at)
         self.reset()
         return True
+
+
+# ---------------------------------------------------------------------------
+# sounddevice adapter
+# ---------------------------------------------------------------------------
+
+
+def _import_sd():
+    """Lazy-import sounddevice to avoid crashing in headless environments."""
+    import sounddevice as sd  # type: ignore
+    return sd
+
+
+class ClapDetector:
+    """Blocking double-clap listener wrapping sounddevice.InputStream.
+
+    Construct once per listening session::
+
+        detector = ClapDetector()
+        if detector.listen(timeout_seconds=30.0):
+            # double clap detected
+            ...
+        else:
+            # timed out before double clap
+            ...
+
+    Uses the same 16kHz / mono / int16 convention as ``tools.voice_mode``.
+    """
+
+    # Match the AudioRecorder convention in tools/voice_mode.py
+    SAMPLE_RATE = 16000
+    CHANNELS = 1
+    DTYPE = "int16"
+    # Chunk size trades latency (shorter = faster reaction) against CPU overhead.
+    # 1600 samples @ 16kHz == 100ms, which is well below a clap's duration.
+    BLOCKSIZE = 1600
+
+    def __init__(self, analyzer: Optional[ClapAnalyzer] = None) -> None:
+        self._analyzer = analyzer or ClapAnalyzer()
+
+    def listen(self, timeout_seconds: float = 30.0) -> bool:
+        """Block until a double-clap is detected or timeout elapses.
+
+        Returns:
+            ``True`` if a double-clap fired; ``False`` on timeout.
+        """
+        import threading
+        import time
+
+        sd = _import_sd()
+
+        detected = threading.Event()
+
+        def _callback(indata, frames, time_info, status):  # noqa: ARG001
+            if status:
+                logger.debug("sounddevice status: %s", status)
+            if detected.is_set():
+                return
+            # indata is shape (frames, channels); flatten to 1-D int16
+            chunk = np.asarray(indata, dtype=np.int16).reshape(-1)
+            if self._analyzer.process_chunk(chunk, time.monotonic()):
+                detected.set()
+
+        with sd.InputStream(
+            samplerate=self.SAMPLE_RATE,
+            channels=self.CHANNELS,
+            dtype=self.DTYPE,
+            blocksize=self.BLOCKSIZE,
+            callback=_callback,
+        ):
+            return detected.wait(timeout=timeout_seconds)
