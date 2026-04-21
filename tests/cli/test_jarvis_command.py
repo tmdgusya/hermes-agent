@@ -77,6 +77,7 @@ class TestHandleJarvisCommand(unittest.TestCase):
             cli_mod.HermesCLI._handle_jarvis_command(stub, "/jarvis")
 
         stub._enable_voice_mode.assert_called_once()
+        MockDetector.return_value.listen.assert_called_once_with(timeout_seconds=30.0)
         self.assertTrue(stub._voice_tts, "TTS must be enabled so the briefing is spoken")
         self.assertGreaterEqual(mock_beep.call_count, 1)
         self.assertFalse(stub._pending_input.empty())

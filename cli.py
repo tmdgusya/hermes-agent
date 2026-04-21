@@ -7582,14 +7582,14 @@ class HermesCLI:
         "저녁 운동 + 단백질 보충",
     )
 
-    @classmethod
-    def _build_jarvis_briefing_prompt(cls) -> str:
+    @staticmethod
+    def _build_jarvis_briefing_prompt() -> str:
         """Build the LLM prompt for the clap-triggered FOMO morning briefing.
 
         V1 uses hardcoded todos; a later iteration will source them from
         ``tasks/todo.md`` or ``tools.todo_tool``.
         """
-        todos = "\n".join(f"- {t}" for t in cls._JARVIS_DUMMY_TODOS)
+        todos = "\n".join(f"- {t}" for t in HermesCLI._JARVIS_DUMMY_TODOS)
         return (
             "지금 즉시 weather 스킬을 호출해 서울의 현재 날씨를 가져오고, "
             "아래 할 일 목록과 종합해서 한국어 아침 브리핑을 만들어.\n\n"
@@ -7631,7 +7631,12 @@ class HermesCLI:
         play_beep(frequency=880, duration=0.12, count=1)
 
         detector = ClapDetector()
-        if not detector.listen(timeout_seconds=30.0):
+        try:
+            got_clap = detector.listen(timeout_seconds=30.0)
+        except Exception as exc:
+            _cprint(f"{_DIM}Jarvis 청취 실패: {exc}. 오디오 장치가 사용 중이거나 권한 문제일 수 있습니다.{_RST}")
+            return
+        if not got_clap:
             _cprint(f"{_DIM}박수를 감지하지 못했습니다. /jarvis 로 다시 시도하세요.{_RST}")
             return
 
